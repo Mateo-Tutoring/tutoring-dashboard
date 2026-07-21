@@ -1010,6 +1010,23 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     parentEmailInput.addEventListener("change", function(){
       S.students[key].parentEmail = parentEmailInput.value.trim(); save();
     });
+    var nameInput = e("input",{ type:"text", value:info.name });
+    nameInput.addEventListener("change", function(){
+      var v = nameInput.value.trim();
+      if(v){ S.students[key].name = v; render(); }
+    });
+    var subjectInput = e("input",{ type:"text", value:info.subject||"" });
+    subjectInput.addEventListener("change", function(){ S.students[key].subject = subjectInput.value.trim(); render(); });
+    var platformInput = e("input",{ type:"text", value:info.platform||"" });
+    platformInput.addEventListener("change", function(){ S.students[key].platform = platformInput.value.trim(); render(); });
+    var sessionCountForDelete = S.sessions.filter(function(s){ return s.key===key; }).length;
+    function removeStudent(){
+      if(!confirm("Remove "+info.name+" and delete "+sessionCountForDelete+" logged session"+(sessionCountForDelete!==1?"s":"")+"? This can't be undone.")) return;
+      delete S.students[key];
+      S.sessions = S.sessions.filter(function(s){ return s.key!==key; });
+      UI.selectedStudent = null;
+      render();
+    }
 
     // ── click-to-log calendar: month view with prev/next navigation
     var HOUR_OPTIONS = [0.5,1,1.5,2,2.5,3,4];
@@ -1064,7 +1081,10 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     }));
 
     var wrap = e("div",{},[]);
-    wrap.appendChild(sectionHeader(info.name+" — Profile", btn("← All students","ghost",function(){ UI.selectedStudent=null; render(); },{fontSize:"10px",padding:"5px 12px"})));
+    wrap.appendChild(sectionHeader(info.name+" — Profile", e("div",{ style:{ display:"flex", gap:"8px" } },[
+      btn("🗑 Remove student","danger",removeStudent,{fontSize:"10px",padding:"5px 12px"}),
+      btn("← All students","ghost",function(){ UI.selectedStudent=null; render(); },{fontSize:"10px",padding:"5px 12px"})
+    ])));
     wrap.appendChild(e("div",{ style:{ display:"grid", gridTemplateColumns:"1fr 1.5fr", gap:"18px" } },[
       card([
         e("div",{ style:{ display:"flex", alignItems:"center", gap:"14px", marginBottom:"20px" } },[
@@ -1088,10 +1108,25 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
             e("div",{ style:{ color: attendRate>=75?"var(--accent)":"var(--red)", fontFamily:"var(--font-mono)", fontWeight:"700", fontSize:"16px" } },[attendRate+"%"])
           ])
         ]),
-        e("div",{ style:{ marginTop:"14px" } },[
-          e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", marginBottom:"6px" } },["Hourly rate ($)"]),
-          e("div",{ style:{ display:"flex", gap:"8px", alignItems:"center" } },[ rateInput, e("span",{ style:{ color:"var(--muted)", fontSize:"10px" } },["Tab/click away to save"]) ])
+        e("div",{ style:{ marginTop:"14px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px" } },[
+          e("div",{},[
+            e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", marginBottom:"6px" } },["Name"]),
+            nameInput
+          ]),
+          e("div",{},[
+            e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", marginBottom:"6px" } },["Subject"]),
+            subjectInput
+          ]),
+          e("div",{},[
+            e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", marginBottom:"6px" } },["Platform"]),
+            platformInput
+          ]),
+          e("div",{},[
+            e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", marginBottom:"6px" } },["Hourly rate ($)"]),
+            rateInput
+          ])
         ]),
+        e("div",{ style:{ marginTop:"10px", color:"var(--muted)", fontSize:"10px" } },["Tab/click away from a field to save"]),
         e("div",{ style:{ marginTop:"14px" } },[
           e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", marginBottom:"6px" } },["Parent email — for the Email to Parent button"]),
           parentEmailInput
@@ -1331,7 +1366,11 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     }
     var subject = "Invoice from "+(S.invoiceInfo.businessName||"Mateo Tutoring")+" — "+label;
     var body = buildInvoiceText(key, start, end, label);
-    window.location.href = "mailto:"+encodeURIComponent(parentEmail)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+    var gmailUrl = "https://mail.google.com/mail/?view=cm&fs=1&to="+encodeURIComponent(parentEmail)+"&su="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+    var w = window.open(gmailUrl, "_blank");
+    if(!w){
+      window.location.href = "mailto:"+encodeURIComponent(parentEmail)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+    }
   }
 
   function generateInvoicePdf(key, start, end, label){
