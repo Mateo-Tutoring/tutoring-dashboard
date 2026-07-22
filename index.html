@@ -1305,7 +1305,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         ]);
       })),
       e("div",{ style:{ padding:"9px 16px", borderTop:"1px solid #1e244020", display:"flex", justifyContent:"flex-end", gap:"6px" } },[
-        e("button",{ onclick:function(){ emailInvoiceToParent(key, rangeStart, rangeEnd, rangeLabel); }, style:{
+        e("button",{ onclick:function(){ emailInvoiceToParent(key, rangeStart, rangeEnd, rangeLabel, this); }, style:{
           background:"transparent", border:"1px solid var(--border)", color:"var(--text-dim)", borderRadius:"6px",
           padding:"4px 10px", fontSize:"10px", fontWeight:"700", cursor:"pointer", fontFamily:"var(--font-display)", letterSpacing:"0.04em", textTransform:"uppercase"
         } },["✉️ Email"]),
@@ -1357,19 +1357,25 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     ]).filter(function(x){return x!==null;}).join("\n");
   }
 
-  function emailInvoiceToParent(key, start, end, label){
+  function emailInvoiceToParent(key, start, end, label, triggerBtn){
     var info = S.students[key];
     var parentEmail = (info.parentEmail||"").trim();
     if(!parentEmail){
       alert("Add "+info.name+"'s parent email first — open their profile in the Students tab and fill in the Parent email field.");
       return;
     }
-    var subject = "Invoice from "+(S.invoiceInfo.businessName||"Mateo Tutoring")+" — "+label;
-    var body = buildInvoiceText(key, start, end, label);
+    var biz = S.invoiceInfo.businessName || "Mateo Tutoring";
+    var subject = biz+" — Invoice for "+info.name+" ("+label+")";
+    var body = "Hi,\n\nAttached is the invoice for "+info.name+"'s tutoring sessions covering "+label+".\n\nPlease let me know if you have any questions.\n\nWarm regards,\n"+biz;
     var gmailUrl = "https://mail.google.com/mail/?view=cm&fs=1&to="+encodeURIComponent(parentEmail)+"&su="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
     var w = window.open(gmailUrl, "_blank");
     if(!w){
       window.location.href = "mailto:"+encodeURIComponent(parentEmail)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+    }
+    if(triggerBtn){
+      var origLabel = triggerBtn.textContent;
+      triggerBtn.textContent = "✓ Draft opened — attach the PDF!";
+      setTimeout(function(){ triggerBtn.textContent = origLabel; }, 3000);
     }
   }
 
@@ -1635,7 +1641,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     },{fontSize:"10px",padding:"6px 14px"});
 
     var emailBtn = btn("✉️ Email to Parent","ghost",function(){
-      emailInvoiceToParent(key, start, end, label);
+      emailInvoiceToParent(key, start, end, label, emailBtn);
     },{fontSize:"10px",padding:"6px 14px"});
 
     var bar = e("div",{ class:"no-print", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 28px", borderBottom:"1px solid var(--border)", background:"var(--surface)" } },[
