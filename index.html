@@ -461,6 +461,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   var PALETTE = ["#ff6b9d","#ff9f43","#ffd43b","#a9e34b","#4ecdc4","#a29bfe","#fd79a8","#55efc4","#e17055","#74b9ff","#00b894","#fdcb6e"];
   var DAY_ABBR = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   var MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var MONTH_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   var STORAGE_KEY = "mateo_dashboard_state_v1";
 
   // ── DATE HELPERS ──────────────────────────────────────────────────────────
@@ -541,7 +542,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   function save(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(S)); }catch(e){} }
 
   // transient UI-only state (not persisted)
-  var UI = { tab:"home", selectedStudent:null, expandedSrc:null, showAddExp:false, newExpCat:EXP_CATS[0], showAddStudent:false, logHours:1, invoiceFor:null, calMonthOffset:0, payMonthOffset:0 };
+  var UI = { tab:"home", selectedStudent:null, expandedSrc:null, showAddExp:false, newExpCat:EXP_CATS[0], showAddStudent:false, logHours:1, invoiceFor:null, calMonthOffset:0, payMonthOffset:0, payGroupBy:"month" };
 
   // ── DERIVED HELPERS ───────────────────────────────────────────────────────
   function toKey(name){ return name.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,""); }
@@ -1323,6 +1324,18 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
   function fmtFull(d){ return d.getDate()+" "+MONTH_ABBR[d.getMonth()]+" "+d.getFullYear(); }
 
+  function periodPhrase(start, end){
+    var s = fromISO(start), en = fromISO(end);
+    var days = Math.round((en-s)/86400000);
+    if(days===6 && s.getDay()===1){
+      return "the week from Monday "+s.getDate()+" "+MONTH_FULL[s.getMonth()]+" to Sunday "+en.getDate()+" "+MONTH_FULL[en.getMonth()]+" "+en.getFullYear();
+    }
+    if(s.getMonth()===en.getMonth() && s.getFullYear()===en.getFullYear() && s.getDate()===1){
+      return "the month of "+MONTH_FULL[s.getMonth()]+" "+s.getFullYear();
+    }
+    return "the period from "+fmtFull(s)+" to "+fmtFull(en);
+  }
+
   function invoiceFacts(key, start, end, label){
     var info = S.students[key];
     var sessions = S.sessions.filter(function(s){ return s.key===key && s.date>=start && s.date<=end; }).sort(function(a,b){return a.date.localeCompare(b.date);});
@@ -1366,7 +1379,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     }
     var biz = S.invoiceInfo.businessName || "Mateo Tutoring";
     var subject = biz+" — Invoice for "+info.name+" ("+label+")";
-    var body = "Hi,\n\nAttached is the invoice for "+info.name+"'s tutoring sessions covering "+label+".\n\nPlease let me know if you have any questions.\n\nWarm regards,\n"+biz;
+    var body = "Hi,\n\nPlease find attached the invoice for "+info.name+"'s tutoring sessions for "+periodPhrase(start,end)+".\n\nPlease let me know if you have any questions.\n\nWarm regards,\n"+biz;
     var gmailUrl = "https://mail.google.com/mail/?view=cm&fs=1&to="+encodeURIComponent(parentEmail)+"&su="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
     var w = window.open(gmailUrl, "_blank");
     if(!w){
@@ -1703,19 +1716,39 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       e("button",{ onclick:function(){ UI.payMonthOffset += 1; render(); }, style:{ background:"var(--card)", border:"1px solid var(--border)", color:"var(--text-dim)", borderRadius:"6px", padding:"5px 12px", fontSize:"13px", cursor:"pointer" } },["›"]),
       UI.payMonthOffset!==0 ? btn("Today","ghost",function(){ UI.payMonthOffset=0; render(); },{fontSize:"9px",padding:"4px 10px"}) : null
     ]);
+    var groupToggle = e("div",{ style:{ display:"flex", gap:"6px" } },[
+      btn("Month", UI.payGroupBy!=="week"?"primary":"ghost", function(){ UI.payGroupBy="month"; render(); }, {fontSize:"9px",padding:"5px 12px"}),
+      btn("Week", UI.payGroupBy==="week"?"primary":"ghost", function(){ UI.payGroupBy="week"; render(); }, {fontSize:"9px",padding:"5px 12px"})
+    ]);
     wrap.appendChild(e("div",{ style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"16px", flexWrap:"wrap", gap:"10px" } },[
       e("span",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.12em" } },["Browse any month — mark sessions paid, invoice, or remove"]),
-      monthNav
+      e("div",{ style:{ display:"flex", alignItems:"center", gap:"14px" } },[ groupToggle, monthNav ])
     ]));
 
     var monthSessions = S.sessions.filter(function(s){ return s.date.slice(0,7)===monthKey; });
-    var byStudent = {};
-    monthSessions.forEach(function(s){ (byStudent[s.key]=byStudent[s.key]||[]).push(s); });
-    var studentKeys = Object.keys(byStudent).sort(function(a,b){ return sumE(byStudent[b])-sumE(byStudent[a]); });
 
-    if(studentKeys.length===0){
+    if(monthSessions.length===0){
       wrap.appendChild(e("div",{ style:{ color:"var(--muted)", fontSize:"13px", textAlign:"center", padding:"40px 0" } },["No sessions logged in "+monthLabel+"."]));
+    } else if(UI.payGroupBy==="week"){
+      var weekMap = {};
+      monthSessions.forEach(function(s){
+        var wkStart = toISO(mondayOf(fromISO(s.date)));
+        if(!weekMap[wkStart]) weekMap[wkStart] = { start:wkStart, end:toISO(addDays(fromISO(wkStart),6)), byStudent:{} };
+        (weekMap[wkStart].byStudent[s.key] = weekMap[wkStart].byStudent[s.key]||[]).push(s);
+      });
+      Object.keys(weekMap).sort().forEach(function(wk){
+        var wkData = weekMap[wk];
+        var wkLabel = fmtRange(fromISO(wkData.start), fromISO(wkData.end));
+        var wkStudentKeys = Object.keys(wkData.byStudent).sort(function(a,b){ return sumE(wkData.byStudent[b])-sumE(wkData.byStudent[a]); });
+        wrap.appendChild(e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.1em", margin:"16px 0 8px" } },["Week of "+wkLabel]));
+        wrap.appendChild(e("div",{ style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:"12px" } }, wkStudentKeys.map(function(k){
+          return payCard(k, wkData.byStudent[k], wkData.start, wkData.end, wkLabel);
+        })));
+      });
     } else {
+      var byStudent = {};
+      monthSessions.forEach(function(s){ (byStudent[s.key]=byStudent[s.key]||[]).push(s); });
+      var studentKeys = Object.keys(byStudent).sort(function(a,b){ return sumE(byStudent[b])-sumE(byStudent[a]); });
       wrap.appendChild(e("div",{ style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:"12px" } }, studentKeys.map(function(k){
         return payCard(k, byStudent[k], monthStart, monthEnd, monthLabel);
       })));
