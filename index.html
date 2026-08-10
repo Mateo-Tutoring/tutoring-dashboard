@@ -510,7 +510,9 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       expenses: { cur:[], prv:[], prv2:[] },
       expTab: "cur",
       savingsHistory: [],
-      invoiceInfo: { businessName:"", email:"", paymentDetails:"" }
+      invoiceInfo: { businessName:"", email:"", paymentDetails:"" },
+      invoiceCounters: {},
+      invoiceAssignments: {}
     };
   }
   var S = defaultState();
@@ -1282,11 +1284,13 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var paidAmt = sumE(sorted.filter(function(s){return s.paid;}));
     var dueAmt = total-paidAmt;
     var allPaid = sorted.length>0 && dueAmt<=0;
+    var nextInvNum = peekInvoiceNumber(key, rangeStart, rangeEnd);
     return card([
       e("div",{ style:{ padding:"14px 16px 10px", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"flex-start" } },[
         e("div",{},[
           e("div",{ style:{ display:"flex", alignItems:"center", gap:"7px", marginBottom:"3px" } },[ dot(info.color), e("span",{ style:{ color:"var(--white)", fontWeight:"700", fontSize:"13px" } },[info.name]) ]),
-          e("div",{ style:{ color:"var(--muted)", fontSize:"10px" } },[sorted.length+" session"+(sorted.length!==1?"s":"")+" · "+money(total)])
+          e("div",{ style:{ color:"var(--muted)", fontSize:"10px" } },[sorted.length+" session"+(sorted.length!==1?"s":"")+" · "+money(total)]),
+          e("div",{ style:{ color:"var(--muted)", fontSize:"9px", marginTop:"2px" } },["Next invoice: #"+nextInvNum])
         ]),
         e("div",{ style:{ textAlign:"right" } },[
           e("div",{ style:{ color: allPaid?"var(--accent)":"var(--gold)", fontFamily:"var(--font-mono)", fontWeight:"700", fontSize:"14px" } },[money(allPaid?total:dueAmt)]),
@@ -1318,8 +1322,25 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     ], { overflow:"hidden" });
   }
 
-  function invoiceNumber(key, start){
-    return "INV-"+TODAY.replace(/-/g,"")+"-"+key.slice(0,3).toUpperCase()+"-"+start.replace(/-/g,"");
+  // Sequential invoice numbers, independent per student, persisted to localStorage.
+  // Once a (student, period) pair has been assigned a number it always returns the same
+  // one — re-opening the same invoice doesn't burn a new number, only a new period does.
+  function getInvoiceNumber(key, start, end){
+    if(!S.invoiceAssignments[key]) S.invoiceAssignments[key] = {};
+    var periodKey = start+"_"+end;
+    if(S.invoiceAssignments[key][periodKey]) return S.invoiceAssignments[key][periodKey];
+    var next = (S.invoiceCounters[key]||0) + 1;
+    S.invoiceCounters[key] = next;
+    S.invoiceAssignments[key][periodKey] = next;
+    save();
+    return next;
+  }
+  // Non-mutating preview of what the NEXT invoice number would be, without assigning one.
+  function peekInvoiceNumber(key, start, end){
+    if(!S.invoiceAssignments[key]) S.invoiceAssignments[key] = {};
+    var periodKey = start+"_"+end;
+    if(S.invoiceAssignments[key][periodKey]) return S.invoiceAssignments[key][periodKey];
+    return (S.invoiceCounters[key]||0) + 1;
   }
 
   function fmtFull(d){ return d.getDate()+" "+MONTH_ABBR[d.getMonth()]+" "+d.getFullYear(); }
@@ -1342,7 +1363,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var total = sumE(sessions);
     var paidAmt = sumE(sessions.filter(function(s){return s.paid;}));
     var dueAmt = total-paidAmt;
-    var num = invoiceNumber(key, start);
+    var num = getInvoiceNumber(key, start, end);
     var issuedD = TODAY_DATE, dueD = addDays(TODAY_DATE, 7);
     var statusLabel = total===0 ? "NO CHARGES" : (dueAmt<=0 ? "PAID" : (paidAmt>0 ? "PARTIALLY PAID" : "PAYMENT DUE"));
     return { info:info, sessions:sessions, total:total, paidAmt:paidAmt, dueAmt:dueAmt, num:num, issuedD:issuedD, dueD:dueD, statusLabel:statusLabel };
@@ -1353,7 +1374,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var biz = S.invoiceInfo.businessName || "Your name / business";
     return [
       biz, S.invoiceInfo.email||"", "",
-      "INVOICE "+f.num,
+      "INVOICE No. "+f.num,
       "Issued: "+fmtFull(f.issuedD)+"   Due: "+fmtFull(f.dueD), "",
       "Billed to: "+f.info.name+(f.info.subject?" ("+f.info.subject+")":""),
       "Billing period: "+label+"   ["+f.statusLabel+"]", "",
@@ -1415,12 +1436,14 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     }
     doc.setTextColor.apply(doc,ACCENT); doc.setFont("times","bold"); doc.setFontSize(19);
     doc.text("Invoice", W-M, 22, {align:"right"});
+    doc.setTextColor(29,78,216); doc.setFont("helvetica","bold"); doc.setFontSize(13);
+    doc.text("Invoice No. "+f.num, W-M, 28, {align:"right"});
 
-    var y = 32;
+    var y = 34;
     doc.setFillColor.apply(doc,TINT);
     doc.rect(M, y, CW, 10, "F");
-    var metaX = [M+CW*0.18, M+CW*0.5, M+CW*0.82];
-    [["INVOICE NO.",f.num],["ISSUED",fmtFull(f.issuedD)],["DUE",fmtFull(f.dueD)]].forEach(function(pair,i){
+    var metaX = [M+CW*0.28, M+CW*0.72];
+    [["ISSUED",fmtFull(f.issuedD)],["DUE",fmtFull(f.dueD)]].forEach(function(pair,i){
       doc.setTextColor.apply(doc,ACCENT); doc.setFont("helvetica","bold"); doc.setFontSize(6.5);
       doc.text(pair[0], metaX[i], y+4.2, {align:"center"});
       doc.setTextColor.apply(doc,INK); doc.setFont("helvetica","bold"); doc.setFontSize(9);
@@ -1560,7 +1583,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var total = sumE(sessions);
     var paidAmt = sumE(sessions.filter(function(s){return s.paid;}));
     var dueAmt = total-paidAmt;
-    var num = invoiceNumber(key, start);
+    var num = getInvoiceNumber(key, start, end);
     var issuedD = TODAY_DATE, dueD = addDays(TODAY_DATE, 7);
     var biz = S.invoiceInfo.businessName || "Your name / business";
     var monogram = (S.invoiceInfo.businessName||"M").trim().charAt(0).toUpperCase()||"M";
@@ -1598,10 +1621,12 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
             S.invoiceInfo.email ? e("div",{ style:{ fontSize:"9px", color:SUBTLE, marginTop:"1px", fontFamily:SANS } },[S.invoiceInfo.email]) : null
           ])
         ]),
-        e("div",{ style:{ fontSize:"19px", fontWeight:"700", letterSpacing:"0.05em", color:ACCENT } },["Invoice"])
+        e("div",{ style:{ textAlign:"right" } },[
+          e("div",{ style:{ fontSize:"19px", fontWeight:"700", letterSpacing:"0.05em", color:ACCENT } },["Invoice"]),
+          e("div",{ style:{ fontSize:"20px", fontWeight:"800", color:"#1d4ed8", marginTop:"4px", fontFamily:SANS } },["Invoice No. "+num])
+        ])
       ]),
       e("div",{ style:{ background:ACCENT_TINT, padding:"8px 26px", display:"flex", fontFamily:SANS } },[
-        metaStat("Invoice No.", num),
         metaStat("Issued", fmtFull(issuedD)),
         metaStat("Due", fmtFull(dueD))
       ]),
