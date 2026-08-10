@@ -544,7 +544,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   function save(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(S)); }catch(e){} }
 
   // transient UI-only state (not persisted)
-  var UI = { tab:"home", selectedStudent:null, expandedSrc:null, showAddExp:false, newExpCat:EXP_CATS[0], showAddStudent:false, logHours:1, invoiceFor:null, calMonthOffset:0, payMonthOffset:0, payGroupBy:"month" };
+  var UI = { tab:"home", selectedStudent:null, expandedSrc:null, showAddExp:false, newExpCat:EXP_CATS[0], showAddStudent:false, logHours:1, invoiceFor:null, calMonthOffset:0, payMonthOffset:0, payGroupBy:"month", reconcileOpen:false, reconcileTransactions:null, reconcileConfirmed:[], reconcileError:null, reconcileFileName:null };
 
   // ── DERIVED HELPERS ───────────────────────────────────────────────────────
   function toKey(name){ return name.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,""); }
@@ -683,6 +683,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
   function page(){
     if(UI.invoiceFor) return invoicePage(UI.invoiceFor.key, UI.invoiceFor.start, UI.invoiceFor.end, UI.invoiceFor.label);
+    if(UI.reconcileOpen) return reconcilePage();
     var wrap = e("div",{ style:{ minHeight:"100vh", background:"var(--bg)" } });
     wrap.appendChild(header());
     wrap.appendChild(todayStrip());
@@ -1690,10 +1691,240 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     return e("div",{ style:{ minHeight:"100vh", background:"var(--bg)" } },[ bar, sheet ]);
   }
 
+  // ── BANK STATEMENT RECONCILIATION ───────────────────────────────────────────
+  // Everything here runs entirely in the browser: the file is read via FileReader
+  // and never leaves this page — no upload, no network request, no server.
+  function parseCsvLine(line){
+    var result = [], cur = "", inQuotes = false;
+    for(var i=0;i<line.length;i++){
+      var c = line[i];
+      if(c === '"'){ inQuotes = !inQuotes; }
+      else if(c === "," && !inQuotes){ result.push(cur); cur = ""; }
+      else { cur += c; }
+    }
+    result.push(cur);
+    return result.map(function(s){ return s.trim().replace(/^"|"$/g,""); });
+  }
+
+  function parseAUDate(str){
+    var m = (str||"").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if(!m) return null;
+    var d=+m[1], mo=+m[2], y=+m[3];
+    if(y<100) y += 2000;
+    if(mo<1||mo>12||d<1||d>31) return null;
+    return y+"-"+String(mo).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+  }
+
+  function parseBankCsv(text){
+    var lines = text.split(/\r?\n/).filter(function(l){ return l.trim().length>0; });
+    if(lines.length===0) return [];
+    var firstCells = parseCsvLine(lines[0]);
+    var looksLikeHeader = !parseAUDate(firstCells[0]) && firstCells.some(function(c){ return /date|narrative|description|detail|debit|credit|amount|balance/i.test(c); });
+    var colMap = null;
+    if(looksLikeHeader){
+      colMap = {};
+      firstCells.forEach(function(h,i){
+        var hl = h.toLowerCase();
+        if(hl.indexOf("date")>-1 && colMap.date===undefined) colMap.date=i;
+        else if((hl.indexOf("narrative")>-1||hl.indexOf("description")>-1||hl.indexOf("detail")>-1) && colMap.desc===undefined) colMap.desc=i;
+        else if(hl.indexOf("debit")>-1) colMap.debit=i;
+        else if(hl.indexOf("credit")>-1) colMap.credit=i;
+        else if(hl.indexOf("amount")>-1 && colMap.amount===undefined) colMap.amount=i;
+      });
+    }
+    var startIdx = looksLikeHeader ? 1 : 0;
+    var out = [];
+    for(var i=startIdx;i<lines.length;i++){
+      var cells = parseCsvLine(lines[i]);
+      if(cells.length<3) continue;
+      var dateStr, desc, credit;
+      if(colMap){
+        dateStr = cells[colMap.date];
+        desc = cells[colMap.desc]||"";
+        if(colMap.credit!==undefined){
+          var raw = cells[colMap.credit]||"";
+          credit = raw.trim()==="" ? NaN : parseFloat(raw.replace(/[^0-9.\-]/g,""));
+        } else if(colMap.amount!==undefined){
+          var amt = parseFloat((cells[colMap.amount]||"").replace(/[^0-9.\-]/g,""));
+          credit = amt>0 ? amt : NaN;
+        }
+      } else {
+        // Westpac's default no-header export order: Date, Narrative, Debit Amount, Credit Amount, Balance
+        dateStr = cells[0];
+        desc = cells[1]||"";
+        var creditRaw = cells[3];
+        credit = (creditRaw===undefined || creditRaw.trim()==="") ? NaN : parseFloat(creditRaw.replace(/[^0-9.\-]/g,""));
+      }
+      var iso = parseAUDate(dateStr);
+      if(!iso || isNaN(credit) || credit<=0) continue;
+      out.push({ date:iso, description:desc, amount:Math.round(credit*100)/100 });
+    }
+    return out;
+  }
+
+  function findPaymentMatches(transactions){
+    var unpaid = S.sessions.filter(function(s){ return !s.paid; });
+    var byStudent = {};
+    unpaid.forEach(function(s){ (byStudent[s.key]=byStudent[s.key]||[]).push(s); });
+    return transactions.map(function(tx){
+      var candidates = [];
+      unpaid.forEach(function(s){
+        if(Math.abs(earn(s)-tx.amount)<0.01){
+          var nm = (S.students[s.key]&&S.students[s.key].name)||s.key;
+          candidates.push({ type:"session", sessionIds:[s.id], label:nm+" — "+s.date+" ("+money(earn(s))+")" });
+        }
+      });
+      Object.keys(byStudent).forEach(function(key){
+        var list = byStudent[key];
+        if(list.length<2) return;
+        var sum = sumE(list);
+        if(Math.abs(sum-tx.amount)<0.01){
+          var nm2 = (S.students[key]&&S.students[key].name)||key;
+          candidates.push({ type:"bulk", sessionIds:list.map(function(s){return s.id;}), label:nm2+" — all "+list.length+" unpaid sessions ("+money(sum)+")" });
+        }
+      });
+      return { tx:tx, candidates:candidates, resolved:false };
+    });
+  }
+
+  function reconcilePage(){
+    var wrap = e("div",{ style:{ minHeight:"100vh", background:"var(--bg)" } },[]);
+    wrap.appendChild(e("div",{ style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 28px", borderBottom:"1px solid var(--border)", background:"var(--surface)" } },[
+      btn("← Back to Payments","ghost",function(){ UI.reconcileOpen=false; UI.reconcileTransactions=null; UI.reconcileConfirmed=[]; UI.reconcileError=null; UI.reconcileFileName=null; render(); },{fontSize:"10px",padding:"6px 14px"}),
+      e("span",{ style:{ color:"var(--text-dim)", fontSize:"11px", fontWeight:"700" } },["Reconcile bank statement"])
+    ]));
+
+    var inner = e("div",{ style:{ maxWidth:"720px", margin:"0 auto", padding:"24px 28px 60px" } },[]);
+
+    inner.appendChild(card([
+      e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:"8px" } },["How this works"]),
+      e("div",{ style:{ color:"var(--text)", fontSize:"12px", lineHeight:"1.7" } },[
+        "1. In Westpac Online Banking, open the account → ", e("b",{},["Export"]), " → choose ", e("b",{},["CSV"]), " and a date range → download.", e("br",{}),
+        "2. Upload that file below. It's parsed entirely in your browser — the file is never uploaded anywhere, no network request is made.", e("br",{}),
+        "3. Deposits are matched against unpaid sessions by amount. Review each suggested match and confirm the ones that are correct."
+      ])
+    ], { padding:"16px 18px", marginBottom:"16px" }));
+
+    var fileInput = e("input",{ type:"file", accept:".csv,text/csv" });
+    fileInput.addEventListener("change", function(){
+      var file = fileInput.files[0];
+      if(!file) return;
+      UI.reconcileError = null;
+      var reader = new FileReader();
+      reader.onload = function(){
+        try{
+          var transactions = parseBankCsv(String(reader.result));
+          if(transactions.length===0){
+            UI.reconcileError = "No incoming (credit) transactions found in that file. Make sure you exported the full CSV with debit/credit columns.";
+            UI.reconcileTransactions = null;
+          } else {
+            UI.reconcileTransactions = transactions;
+            UI.reconcileConfirmed = [];
+          }
+        }catch(err){
+          UI.reconcileError = "Couldn't read that file as a CSV: "+err.message;
+          UI.reconcileTransactions = null;
+        }
+        UI.reconcileFileName = file.name;
+        render();
+      };
+      reader.onerror = function(){ UI.reconcileError = "Couldn't read that file."; render(); };
+      reader.readAsText(file);
+    });
+
+    inner.appendChild(card([
+      e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:"10px" } },["Upload CSV"]),
+      fileInput,
+      UI.reconcileFileName ? e("div",{ style:{ color:"var(--muted)", fontSize:"10px", marginTop:"8px" } },["Loaded: "+UI.reconcileFileName]) : null
+    ], { padding:"16px 18px", marginBottom:"16px" }));
+
+    if(UI.reconcileError){
+      inner.appendChild(e("div",{ style:{ background:"var(--red-dim)", border:"1px solid #ff4d6d30", borderRadius:"10px", padding:"12px 16px", color:"var(--red)", fontSize:"12px", marginBottom:"16px" } },[UI.reconcileError]));
+    }
+
+    if(UI.reconcileTransactions){
+      // Only re-match transactions not already confirmed, against the CURRENT unpaid-session
+      // state — this keeps candidate labels/sums accurate as sessions get confirmed one by one.
+      var pendingIdx = UI.reconcileTransactions.map(function(tx,i){return i;}).filter(function(i){
+        return !UI.reconcileConfirmed.some(function(c){ return c.i===i; });
+      });
+      var pendingTx = pendingIdx.map(function(i){ return UI.reconcileTransactions[i]; });
+      var liveMatches = findPaymentMatches(pendingTx);
+      var matched = liveMatches.filter(function(m){ return m.candidates.length>0; });
+      var noMatch = liveMatches.filter(function(m){ return m.candidates.length===0; });
+
+      inner.appendChild(e("div",{ style:{ display:"flex", gap:"10px", marginBottom:"16px" } },[
+        statCard("Transactions found", String(UI.reconcileTransactions.length), null, "var(--blue)"),
+        statCard("Possible matches", String(matched.length), null, "var(--gold)"),
+        statCard("Confirmed", String(UI.reconcileConfirmed.length), null, "var(--accent)")
+      ]));
+
+      if(matched.length>0){
+        inner.appendChild(sectionHeader("Review matches"));
+        liveMatches.forEach(function(m, j){
+          if(m.candidates.length===0) return;
+          var originalIdx = pendingIdx[j];
+          inner.appendChild(card([
+            e("div",{ style:{ padding:"12px 16px", borderBottom:"1px solid var(--border)" } },[
+              e("div",{ style:{ display:"flex", justifyContent:"space-between", alignItems:"center" } },[
+                e("span",{ style:{ color:"var(--white)", fontSize:"12px", fontWeight:"700" } },[m.tx.description||"(no description)"]),
+                e("span",{ style:{ color:"var(--accent)", fontFamily:"var(--font-mono)", fontWeight:"700", fontSize:"13px" } },[money(m.tx.amount)])
+              ]),
+              e("div",{ style:{ color:"var(--muted)", fontSize:"10px", fontFamily:"var(--font-mono)", marginTop:"2px" } },[m.tx.date])
+            ]),
+            e("div",{ style:{ padding:"10px 16px", display:"flex", flexDirection:"column", gap:"6px" } }, m.candidates.map(function(c){
+              return e("div",{ style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"10px" } },[
+                e("span",{ style:{ color:"var(--text-dim)", fontSize:"11px" } },[c.label]),
+                btn("✓ Confirm paid","primary",function(){
+                  c.sessionIds.forEach(function(id){
+                    var s = S.sessions.find(function(x){ return x.id===id; });
+                    if(s) s.paid = true;
+                  });
+                  UI.reconcileConfirmed.push({ i:originalIdx, label:c.label, tx:m.tx });
+                  save();
+                  render();
+                },{fontSize:"9px",padding:"4px 10px"})
+              ]);
+            }))
+          ], { marginBottom:"10px" }));
+        });
+      } else {
+        inner.appendChild(e("div",{ style:{ color:"var(--muted)", fontSize:"13px", textAlign:"center", padding:"20px 0" } },["No unpaid sessions matched any deposit amount yet."]));
+      }
+
+      if(UI.reconcileConfirmed.length>0){
+        inner.appendChild(sectionHeader("Confirmed"));
+        inner.appendChild(card([
+          e("div",{}, UI.reconcileConfirmed.map(function(c,i){
+            return e("div",{ style:{ display:"flex", justifyContent:"space-between", padding:"8px 16px", borderTop: i>0?"1px solid #1e244020":"none" } },[
+              e("span",{ style:{ color:"var(--text)", fontSize:"11px" } },[c.tx.date+" · "+money(c.tx.amount)+" → "+c.label]),
+              e("span",{ style:{ color:"var(--accent)", fontSize:"11px" } },["✓"])
+            ]);
+          }))
+        ], { marginBottom:"16px" }));
+      }
+
+      if(noMatch.length>0){
+        inner.appendChild(sectionHeader(noMatch.length+" deposit"+(noMatch.length!==1?"s":"")+" with no matching unpaid session"));
+        inner.appendChild(card([
+          e("div",{}, noMatch.map(function(m,i){
+            return e("div",{ style:{ display:"flex", justifyContent:"space-between", padding:"8px 16px", borderTop: i>0?"1px solid #1e244020":"none" } },[
+              e("span",{ style:{ color:"var(--text-dim)", fontSize:"11px" } },[m.tx.date+" · "+(m.tx.description||"(no description)")]),
+              e("span",{ style:{ color:"var(--muted)", fontFamily:"var(--font-mono)", fontSize:"11px" } },[money(m.tx.amount)])
+            ]);
+          }))
+        ]));
+      }
+    }
+
+    wrap.appendChild(inner);
+    return wrap;
+  }
+
   function paymentsTab(){
     var d = derived();
     var wrap = e("div",{},[]);
-    wrap.appendChild(sectionHeader("Payments"));
+    wrap.appendChild(sectionHeader("Payments", btn("📥 Reconcile Bank Statement","ghost",function(){ UI.reconcileOpen=true; render(); },{fontSize:"10px",padding:"5px 12px"})));
     var invBiz = e("input",{ type:"text", placeholder:"Your name / business", value:S.invoiceInfo.businessName });
     var invEmail = e("input",{ type:"text", placeholder:"Contact email (optional)", value:S.invoiceInfo.email });
     var invPay = e("textarea",{ placeholder:"Payment details — one per line, e.g.\nAcc Name: ...\nBSB: ...\nAcc: ...", rows:"3" });
