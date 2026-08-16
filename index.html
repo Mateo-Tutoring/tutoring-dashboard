@@ -471,6 +471,17 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   function mondayOf(d){ var x=new Date(d); var day=x.getDay(); x.setDate(x.getDate()+(day===0?-6:1-day)); x.setHours(0,0,0,0); return x; }
   function fmtDM(d){ return d.getDate()+" "+MONTH_ABBR[d.getMonth()]; }
   function fmtRange(a,b){ return a.getMonth()===b.getMonth() ? (a.getDate()+"–"+fmtDM(b)) : (fmtDM(a)+"–"+fmtDM(b)); }
+  function fmtDateDMY(value){
+    var d = typeof value==="string" ? fromISO(value) : value;
+    return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear();
+  }
+  function fmtDateWithDay(value){
+    var d = typeof value==="string" ? fromISO(value) : value;
+    return fmtDateDMY(d)+" "+DAY_ABBR[(d.getDay()+6)%7];
+  }
+  function fmtWeekRange(a,b){
+    return fmtDM(a)+" "+DAY_ABBR[(a.getDay()+6)%7]+" – "+fmtDM(b)+" "+DAY_ABBR[(b.getDay()+6)%7];
+  }
 
   var TODAY_DATE = new Date();
   var TODAY = toISO(TODAY_DATE);
@@ -827,7 +838,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var projected = S.sessions.filter(function(s){ return isFuture(s) && WEEK_DATES.indexOf(s.date)>=0; }).reduce(function(a,s){return a+earn(s);},0);
     return card([
       e("div",{ style:{ padding:"14px 18px 10px", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" } },[
-        e("span",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.12em" } },["Week of "+fmtRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6]))]),
+        e("span",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.12em" } },["Week of "+fmtWeekRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6]))]),
         e("span",{ style:{ color:"var(--muted)", fontSize:"10px" } },["Future sessions shown as placeholders"])
       ]),
       e("div",{ style:{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", borderTop:"1px solid var(--border)" } },
@@ -860,11 +871,11 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   function homeTab(){
     var d = derived();
     var wrap = e("div",{},[]);
-    wrap.appendChild(sectionHeader("This week — "+fmtRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6]))));
+    wrap.appendChild(sectionHeader("This week — "+fmtWeekRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6]))));
     wrap.appendChild(weekCalendar());
     wrap.appendChild(e("div",{ style:{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"12px", marginTop:"18px" } },[
       statCard("This fortnight income", money(d.fortIncome), d.fortSessions+" sessions", null, true),
-      statCard("This week hrs", d.weekHrs.toFixed(1)+"h", fmtRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6])), "var(--gold)"),
+      statCard("This week hrs", d.weekHrs.toFixed(1)+"h", fmtWeekRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6])), "var(--gold)"),
       statCard("Outstanding", money(d.outTotal), d.outCount+" students", d.outTotal>0?"var(--red)":"var(--accent)"),
       statCard("FY net", money(d.fyIncome-d.fyExp), "trailing 12 months", "var(--blue)")
     ]));
@@ -901,7 +912,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
                 e("div",{ style:{ display:"flex", alignItems:"center", gap:"8px" } },[
                   dot(info?info.color:"var(--accent)",6),
                   e("span",{ style:{ color:"var(--text)", fontSize:"12px", fontWeight:"600" } },[info?info.name:s.key]),
-                  e("span",{ style:{ color:"var(--muted)", fontSize:"10px" } },[s.date.slice(5)])
+                  e("span",{ style:{ color:"var(--muted)", fontSize:"10px" } },[fmtDateWithDay(s.date)])
                 ]),
                 e("span",{ style:{ color:info?info.color:"var(--accent)", fontFamily:"var(--font-mono)", fontSize:"12px", fontWeight:"700" } },[money(earn(s))])
               ]);
@@ -920,7 +931,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       statCard("Income so far", money(d.fortIncome), d.fortSessions+" sessions", null, true),
       statCard("Expenses", money(d.fortExpenses), "Logged", "var(--red)"),
       statCard("Net", money(d.fortNet), null, d.fortNet>=0?"var(--accent)":"var(--red)", d.fortNet>=0),
-      statCard("This week hrs", d.weekHrs.toFixed(1)+"h", fmtRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6])), "var(--gold)"),
+      statCard("This week hrs", d.weekHrs.toFixed(1)+"h", fmtWeekRange(fromISO(WEEK_DATES[0]),fromISO(WEEK_DATES[6])), "var(--gold)"),
       statCard("Avg / session", d.fortSessions>0 ? money(d.fortIncome/d.fortSessions) : "—", null, "var(--blue)")
     ]));
 
@@ -942,7 +953,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
             if(open){
               s.items.slice().sort(function(a,b){return a.date.localeCompare(b.date);}).forEach(function(item){
                 rows.push(e("div",{ class:"fade-in", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 18px 8px 38px", borderTop:"1px solid #1e244020", background:"var(--surface)" } },[
-                  e("span",{ style:{ color:"var(--text-dim)", fontSize:"11px", fontFamily:"var(--font-mono)" } },[item.date.slice(5)]),
+                  e("span",{ style:{ color:"var(--text-dim)", fontSize:"11px", fontFamily:"var(--font-mono)" } },[fmtDateWithDay(item.date)]),
                   e("span",{ style:{ color:"var(--muted)", fontSize:"10px" } },[item.hrs+"h × $"+studentRate(item.key)+"/hr"]),
                   e("span",{ style:{ color:s.color, fontFamily:"var(--font-mono)", fontSize:"12px", fontWeight:"700" } },[money(earn(item))])
                 ]));
@@ -1152,7 +1163,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
           ]),
           e("div",{ style:{ padding:"12px 18px", display:"flex", flexWrap:"wrap", gap:"4px", maxHeight:"140px", overflowY:"auto" } },
             sessions.map(function(s){
-              return e("div",{ style:{ background:info.color+"15", border:"1px solid "+info.color+"30", borderRadius:"6px", padding:"3px 8px", fontSize:"10px", color:info.color, fontFamily:"var(--font-mono)" } },[s.date.slice(5)+" · "+s.hrs+"h"]);
+              return e("div",{ style:{ background:info.color+"15", border:"1px solid "+info.color+"30", borderRadius:"6px", padding:"3px 8px", fontSize:"10px", color:info.color, fontFamily:"var(--font-mono)" } },[fmtDateWithDay(s.date)+" · "+s.hrs+"h"]);
             })
           )
         ])
@@ -1300,7 +1311,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       ]),
       e("div",{}, sorted.map(function(s){
         return e("div",{ style:{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:"8px", padding:"7px 16px", borderTop:"1px solid #1e244020" } },[
-          e("span",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontFamily:"var(--font-mono)", flex:"1" } },[s.date+(isFuture(s)?" · upcoming":"")+" · "+s.hrs+"h"]),
+          e("span",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontFamily:"var(--font-mono)", flex:"1" } },[fmtDateWithDay(s.date)+(isFuture(s)?" · upcoming":"")+" · "+s.hrs+"h"]),
           e("span",{ style:{ color:"var(--muted)", fontSize:"10px", fontFamily:"var(--font-mono)" } },[money(earn(s))]),
           e("button",{ onclick:function(){ s.paid = !s.paid; render(); }, style:{
             background: s.paid?"var(--accent-dim)":"var(--gold-dim)", color: s.paid?"var(--accent)":"var(--gold)",
@@ -1381,7 +1392,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       "Billing period: "+label+"   ["+f.statusLabel+"]", "",
       "Date         Hours   Rate      Amount"
     ].concat(f.sessions.map(function(s){
-      return s.date+"    "+s.hrs+"h    $"+studentRate(key)+"/hr    "+money(earn(s));
+      return fmtDateDMY(s.date)+"    "+s.hrs+"h    $"+studentRate(key)+"/hr    "+money(earn(s));
     })).concat([
       "",
       "Subtotal: "+money(f.total),
@@ -1494,7 +1505,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       sessions.forEach(function(s){
         if(y > 268){ doc.addPage(); y = 20; }
         doc.setTextColor.apply(doc,INK); doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
-        doc.text(s.date, col.date, y+5);
+        doc.text(fmtDateDMY(s.date), col.date, y+5);
         doc.text("Tutoring — "+(info.subject||"Session"), col.desc, y+5);
         doc.text(s.hrs+"h", col.hrsR, y+5, {align:"right"});
         doc.text("$"+studentRate(key)+"/hr", col.rateR, y+5, {align:"right"});
@@ -1595,7 +1606,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
     var rows = sessions.map(function(s){
       return e("tr",{},[
-        e("td",{ style:{ padding:"9px 8px", borderBottom:"1px solid "+LINE, fontSize:"12.5px", color:INK } },[s.date]),
+        e("td",{ style:{ padding:"9px 8px", borderBottom:"1px solid "+LINE, fontSize:"12.5px", color:INK } },[fmtDateDMY(s.date)]),
         e("td",{ style:{ padding:"9px 8px", borderBottom:"1px solid "+LINE, fontSize:"12.5px", color:INK } },["Tutoring — "+(info.subject||"Session")]),
         e("td",{ style:{ padding:"9px 8px", borderBottom:"1px solid "+LINE, fontSize:"12.5px", textAlign:"right", color:INK } },[s.hrs+"h"]),
         e("td",{ style:{ padding:"9px 8px", borderBottom:"1px solid "+LINE, fontSize:"12.5px", textAlign:"right", color:INK } },["$"+studentRate(key)+"/hr"]),
@@ -1771,7 +1782,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       unpaid.forEach(function(s){
         if(Math.abs(earn(s)-tx.amount)<0.01){
           var nm = (S.students[s.key]&&S.students[s.key].name)||s.key;
-          candidates.push({ type:"session", sessionIds:[s.id], label:nm+" — "+s.date+" ("+money(earn(s))+")" });
+          candidates.push({ type:"session", sessionIds:[s.id], label:nm+" — "+fmtDateWithDay(s.date)+" ("+money(earn(s))+")" });
         }
       });
       Object.keys(byStudent).forEach(function(key){
@@ -1870,7 +1881,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
                 e("span",{ style:{ color:"var(--white)", fontSize:"12px", fontWeight:"700" } },[m.tx.description||"(no description)"]),
                 e("span",{ style:{ color:"var(--accent)", fontFamily:"var(--font-mono)", fontWeight:"700", fontSize:"13px" } },[money(m.tx.amount)])
               ]),
-              e("div",{ style:{ color:"var(--muted)", fontSize:"10px", fontFamily:"var(--font-mono)", marginTop:"2px" } },[m.tx.date])
+              e("div",{ style:{ color:"var(--muted)", fontSize:"10px", fontFamily:"var(--font-mono)", marginTop:"2px" } },[fmtDateDMY(m.tx.date)])
             ]),
             e("div",{ style:{ padding:"10px 16px", display:"flex", flexDirection:"column", gap:"6px" } }, m.candidates.map(function(c){
               return e("div",{ style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"10px" } },[
@@ -1897,7 +1908,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         inner.appendChild(card([
           e("div",{}, UI.reconcileConfirmed.map(function(c,i){
             return e("div",{ style:{ display:"flex", justifyContent:"space-between", padding:"8px 16px", borderTop: i>0?"1px solid #1e244020":"none" } },[
-              e("span",{ style:{ color:"var(--text)", fontSize:"11px" } },[c.tx.date+" · "+money(c.tx.amount)+" → "+c.label]),
+              e("span",{ style:{ color:"var(--text)", fontSize:"11px" } },[fmtDateDMY(c.tx.date)+" · "+money(c.tx.amount)+" → "+c.label]),
               e("span",{ style:{ color:"var(--accent)", fontSize:"11px" } },["✓"])
             ]);
           }))
@@ -1909,7 +1920,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
         inner.appendChild(card([
           e("div",{}, noMatch.map(function(m,i){
             return e("div",{ style:{ display:"flex", justifyContent:"space-between", padding:"8px 16px", borderTop: i>0?"1px solid #1e244020":"none" } },[
-              e("span",{ style:{ color:"var(--text-dim)", fontSize:"11px" } },[m.tx.date+" · "+(m.tx.description||"(no description)")]),
+              e("span",{ style:{ color:"var(--text-dim)", fontSize:"11px" } },[fmtDateDMY(m.tx.date)+" · "+(m.tx.description||"(no description)")]),
               e("span",{ style:{ color:"var(--muted)", fontFamily:"var(--font-mono)", fontSize:"11px" } },[money(m.tx.amount)])
             ]);
           }))
@@ -1994,7 +2005,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       });
       Object.keys(weekMap).sort().forEach(function(wk){
         var wkData = weekMap[wk];
-        var wkLabel = fmtRange(fromISO(wkData.start), fromISO(wkData.end));
+        var wkLabel = fmtWeekRange(fromISO(wkData.start), fromISO(wkData.end));
         var wkStudentKeys = Object.keys(wkData.byStudent).sort(function(a,b){ return sumE(wkData.byStudent[b])-sumE(wkData.byStudent[a]); });
         wrap.appendChild(e("div",{ style:{ color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.1em", margin:"16px 0 8px" } },["Week of "+wkLabel]));
         wrap.appendChild(e("div",{ style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:"12px" } }, wkStudentKeys.map(function(k){
