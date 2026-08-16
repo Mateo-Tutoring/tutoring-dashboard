@@ -555,7 +555,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   function save(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(S)); }catch(e){} }
 
   // transient UI-only state (not persisted)
-  var UI = { tab:"home", selectedStudent:null, expandedSrc:null, showAddExp:false, newExpCat:EXP_CATS[0], showAddStudent:false, logHours:1, invoiceFor:null, calMonthOffset:0, payMonthOffset:0, payGroupBy:"month", reconcileOpen:false, reconcileTransactions:null, reconcileConfirmed:[], reconcileError:null, reconcileFileName:null };
+  var UI = { tab:"home", selectedStudent:null, expandedSrc:null, showAddExp:false, newExpCat:EXP_CATS[0], showAddStudent:false, logHours:1, invoiceFor:null, calMonthOffset:0, payMonthOffset:0, payGroupBy:"month", outstandingOnly:false, outstandingGroup:"all", reconcileOpen:false, reconcileTransactions:null, reconcileConfirmed:[], reconcileError:null, reconcileFileName:null };
 
   // ── DERIVED HELPERS ───────────────────────────────────────────────────────
   function toKey(name){ return name.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,""); }
@@ -1932,6 +1932,73 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     return wrap;
   }
 
+  function fortnightForDate(value){
+    var d = typeof value==="string" ? fromISO(value) : value;
+    var index = Math.floor((mondayOf(d)-CYCLE_EPOCH)/(14*86400000));
+    var start = addDays(CYCLE_EPOCH,index*14);
+    var end = addDays(start,13);
+    return { start:toISO(start), end:toISO(end), label:fmtWeekRange(start,end) };
+  }
+
+  function outstandingPaymentsView(){
+    var unpaid = S.sessions.filter(function(s){ return !s.paid; });
+    var wrap = e("div",{},[]);
+    var controls = e("div",{ style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"10px", marginBottom:"16px", flexWrap:"wrap" } },[
+      e("div",{},[
+        e("div",{ style:{ color:"var(--white)", fontSize:"15px", fontWeight:"800" } },["All outstanding payments"]),
+        e("div",{ style:{ color:"var(--muted)", fontSize:"10px", marginTop:"3px" } },[unpaid.length+" unpaid session"+(unpaid.length!==1?"s":"")+" · "+money(sumE(unpaid))+" to collect"])
+      ]),
+      e("div",{ style:{ display:"flex", gap:"6px", alignItems:"center" } },[
+        btn("All",UI.outstandingGroup==="all"?"primary":"ghost",function(){ UI.outstandingGroup="all"; render(); },{fontSize:"9px",padding:"5px 12px"}),
+        btn("Fortnight",UI.outstandingGroup==="fortnight"?"primary":"ghost",function(){ UI.outstandingGroup="fortnight"; render(); },{fontSize:"9px",padding:"5px 12px"}),
+        btn("Week",UI.outstandingGroup==="week"?"primary":"ghost",function(){ UI.outstandingGroup="week"; render(); },{fontSize:"9px",padding:"5px 12px"}),
+        btn("× Close","ghost",function(){ UI.outstandingOnly=false; render(); },{fontSize:"9px",padding:"5px 12px"})
+      ])
+    ]);
+    wrap.appendChild(controls);
+
+    if(unpaid.length===0){
+      wrap.appendChild(e("div",{ style:{ background:"var(--accent-dim)", border:"1px solid #00f5c435", borderRadius:"14px", padding:"24px", color:"var(--accent)", textAlign:"center", fontWeight:"800" } },["All payments have been collected."]));
+      return wrap;
+    }
+
+    var groups = {};
+    unpaid.forEach(function(s){
+      var key, range;
+      if(UI.outstandingGroup==="week"){
+        var weekStart = mondayOf(fromISO(s.date));
+        range = { start:toISO(weekStart), end:toISO(addDays(weekStart,6)), label:fmtWeekRange(weekStart,addDays(weekStart,6)) };
+        key = range.start;
+      } else if(UI.outstandingGroup==="fortnight"){
+        range = fortnightForDate(s.date);
+        key = range.start;
+      } else {
+        var d = fromISO(s.date);
+        var monthStart = new Date(d.getFullYear(),d.getMonth(),1);
+        var monthEnd = new Date(d.getFullYear(),d.getMonth()+1,0);
+        range = { start:toISO(monthStart), end:toISO(monthEnd), label:MONTH_ABBR[d.getMonth()]+" "+d.getFullYear() };
+        key = range.start;
+      }
+      if(!groups[key]) groups[key] = { start:range.start, end:range.end, label:range.label, byStudent:{} };
+      (groups[key].byStudent[s.key]=groups[key].byStudent[s.key]||[]).push(s);
+    });
+
+    Object.keys(groups).sort().forEach(function(groupKey){
+      var group = groups[groupKey];
+      var keys = Object.keys(group.byStudent).sort(function(a,b){ return sumE(group.byStudent[b])-sumE(group.byStudent[a]); });
+      var groupSessions = [];
+      keys.forEach(function(k){ groupSessions=groupSessions.concat(group.byStudent[k]); });
+      wrap.appendChild(e("div",{ style:{ display:"flex", justifyContent:"space-between", alignItems:"center", color:"var(--text-dim)", fontSize:"10px", fontWeight:"700", textTransform:"uppercase", letterSpacing:"0.1em", margin:"18px 0 8px" } },[
+        e("span",{},[(UI.outstandingGroup==="week"?"Week of ":UI.outstandingGroup==="fortnight"?"Fortnight ":"")+group.label]),
+        e("span",{ style:{ color:"var(--gold)" } },[money(sumE(groupSessions))+" due"])
+      ]));
+      wrap.appendChild(e("div",{ style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:"12px" } },keys.map(function(k){
+        return payCard(k,group.byStudent[k],group.start,group.end,group.label);
+      })));
+    });
+    return wrap;
+  }
+
   function paymentsTab(){
     var d = derived();
     var wrap = e("div",{},[]);
@@ -1952,10 +2019,10 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     ], { padding:"14px 18px", marginBottom:"16px" }));
 
     if(d.outCount>0){
-      wrap.appendChild(e("div",{ style:{ background:"linear-gradient(135deg,var(--gold-dim),var(--card))", border:"1px solid #f5c40035", borderRadius:"14px", padding:"14px 20px", marginBottom:"16px", display:"flex", justifyContent:"space-between", alignItems:"center" } },[
+      wrap.appendChild(e("button",{ onclick:function(){ UI.outstandingOnly=true; render(); }, style:{ width:"100%", background:"linear-gradient(135deg,var(--gold-dim),var(--card))", border:"1px solid #f5c40035", borderRadius:"14px", padding:"14px 20px", marginBottom:"16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", textAlign:"left", fontFamily:"var(--font-display)" } },[
         e("div",{},[
           e("div",{ style:{ color:"var(--gold)", fontWeight:"800", fontSize:"14px" } },[d.outCount+" student"+(d.outCount!==1?"s":"")+" outstanding this fortnight"]),
-          e("div",{ style:{ color:"var(--text-dim)", fontSize:"11px", marginTop:"3px" } },[money(d.outTotal)+" to collect"])
+          e("div",{ style:{ color:"var(--text-dim)", fontSize:"11px", marginTop:"3px" } },[money(d.outTotal)+" to collect · Click to view every outstanding payment"])
         ]),
         e("div",{ style:{ textAlign:"right" } },[
           e("div",{ style:{ color:"var(--accent)", fontFamily:"var(--font-mono)", fontSize:"20px", fontWeight:"700" } },[money(d.fortPaidTotal)]),
@@ -1970,6 +2037,11 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     }
 
     // ── month browser: interact with every session, any month, past or future
+    if(UI.outstandingOnly){
+      wrap.appendChild(outstandingPaymentsView());
+      return wrap;
+    }
+
     var viewDate = new Date(TODAY_DATE.getFullYear(), TODAY_DATE.getMonth()+UI.payMonthOffset, 1);
     var monthLabel = MONTH_ABBR[viewDate.getMonth()]+" "+viewDate.getFullYear();
     var monthKey = viewDate.getFullYear()+"-"+String(viewDate.getMonth()+1).padStart(2,"0");
